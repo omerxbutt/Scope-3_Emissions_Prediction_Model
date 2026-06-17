@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scope 3 Emissions Predictor</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f8f8f4;
+      --panel: #f2f4ef;
+      --result-panel: #ffffff;
+      --ink: #14211a;
+      --muted: #63716a;
+      --line: #d8ded6;
+      --field-line: #b9c2ba;
+      --accent: #1f4f36;
+      --accent-strong: #163927;
+      --accent-soft: #e8eee8;
+      --error: #a73328;
+      --error-bg: #fff1ef;
+      --warm: #a57738;
+      --shadow: 0 18px 45px rgba(26, 38, 32, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(31, 79, 54, 0.035), transparent 34%),
+        linear-gradient(135deg, rgba(20, 33, 26, 0.018) 25%, transparent 25%),
+        linear-gradient(315deg, rgba(20, 33, 26, 0.014) 25%, transparent 25%),
+        var(--bg);
+      background-size: auto, 22px 22px, 22px 22px;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(390px, 1.18fr) minmax(320px, 0.82fr);
+      gap: 28px;
+      align-items: start;
+    }
+
+    .intro {
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2.45rem, 5vw, 4.9rem);
+      line-height: 1.03;
+      letter-spacing: 0;
+      max-width: 960px;
+    }
+
+    .intro p {
+      max-width: 640px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.03rem;
+    }
+
+    .panel,
+    .result-card,
+    .notice,
+    .error-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel {
+      background: var(--panel);
+      border-left: 4px solid var(--accent);
+      padding: 30px 32px;
+    }
+
+    form {
+      display: grid;
+      gap: 24px;
+    }
+
+    .field {
+      position: relative;
+    }
+
+    label {
+      position: absolute;
+      left: 0;
+      top: 17px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+      transition: color 0.2s ease, transform 0.2s ease, font-size 0.2s ease;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 58px;
+      border: 0;
+      border-bottom: 2px solid var(--field-line);
+      border-radius: 0;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 1.04rem;
+      padding: 22px 0 8px;
+      transition: border-color 0.2s ease, color 0.2s ease;
+    }
+
+    input::placeholder {
+      color: transparent;
+    }
+
+    input:focus,
+    select:focus {
+      outline: 0;
+      border-color: var(--accent);
+    }
+
+    input:focus + label,
+    input:not(:placeholder-shown) + label,
+    select + label {
+      color: var(--accent);
+      font-size: 12px;
+      transform: translateY(-18px);
+    }
+
+    button:focus-visible {
+      outline: 3px solid rgba(31, 79, 54, 0.22);
+      outline-offset: 3px;
+    }
+
+    button {
+      min-height: 52px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accent-strong);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.68;
+    }
+
+    .side {
+      display: grid;
+      gap: 16px;
+    }
+
+    .result-card {
+      min-height: 344px;
+      padding: 30px;
+      background: var(--result-panel);
+      display: grid;
+      align-content: center;
+      gap: 16px;
+    }
+
+    .eyebrow {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.76rem;
+    }
+
+    .result-value {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(3.15rem, 6.2vw, 5.8rem);
+      line-height: 0.92;
+      font-weight: 850;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .result-unit {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: clamp(0.82rem, 1.4vw, 1rem);
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .result-main {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+    }
+
+    .result-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .result-icon svg {
+      width: 25px;
+      height: 25px;
+      stroke: currentColor;
+    }
+
+    .insight {
+      margin: 0;
+      color: var(--ink);
+      font-size: 0.98rem;
+      font-weight: 800;
+    }
+
+    .confidence {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+      font-weight: 750;
+    }
+
+    .intensity-wrap {
+      display: grid;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .intensity-labels {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .intensity-bar {
+      position: relative;
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #2f7d4e 0%, #d4a642 52%, #b74332 100%);
+      box-shadow: inset 0 0 0 1px rgba(20, 33, 26, 0.13);
+    }
+
+    .intensity-marker {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 18px;
+      height: 18px;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      background: var(--ink);
+      box-shadow: 0 5px 13px rgba(20, 33, 26, 0.24);
+      transform: translate(-50%, -50%);
+      transition: left 0.25s ease;
+    }
+
+    .disclaimer,
+    .status,
+    .validation {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .notice,
+    .error-panel {
+      padding: 16px;
+    }
+
+    .notice {
+      background: var(--accent-soft);
+      box-shadow: none;
+    }
+
+    .notice strong,
+    .error-panel strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .error-panel {
+      display: none;
+      background: var(--error-bg);
+      border-color: #f0b7b0;
+      color: var(--error);
+    }
+
+    .error-panel.visible {
+      display: block;
+    }
+
+    .validation {
+      min-height: 22px;
+      color: var(--error);
+      font-weight: 700;
+    }
+
+    @media (max-width: 820px) {
+      main {
+        padding: 32px 0;
+      }
+
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        padding: 24px;
+      }
+
+      .result-value {
+        font-size: clamp(2.45rem, 13vw, 4.1rem);
+      }
+
+      .result-main {
+        grid-template-columns: 38px minmax(0, 1fr);
+      }
+
+      .result-icon {
+        width: 38px;
+        height: 38px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <h1 id="page-title">Scope 3 Emissions Predictor</h1>
+      <p>Turn operating signals into a browser-run Scope 3 estimate, with sector context and an intensity marker for quick climate-risk interpretation.</p>
+    </section>
+
+    <div class="shell">
+      <section class="panel" aria-label="Emissions input form">
+        <form id="emissions-form" novalidate>
+          <div class="field">
+            <input id="revenue" name="revenue" type="number" min="0" step="0.01" inputmode="decimal" placeholder="250000000" required>
+            <label for="revenue">Revenue</label>
+          </div>
+
+          <div class="field">
+            <input id="cogs" name="cogs" type="number" min="0" step="0.01" inputmode="decimal" placeholder="125000000" required>
+            <label for="cogs">COGS</label>
+          </div>
+
+          <div class="field">
+            <input id="employees" name="employees" type="number" min="0" step="1" inputmode="numeric" placeholder="2500" required>
+            <label for="employees">Employee Headcount</label>
+          </div>
+
+          <div class="field">
+            <select id="sector" name="sector" required>
+              <option value="Energy">Energy</option>
+              <option value="Technology">Technology</option>
+              <option value="Manufacturing">Manufacturing</option>
+              <option value="Financials">Financials</option>
+            </select>
+            <label for="sector">Sector</label>
+          </div>
+
+          <p id="validation-message" class="validation" role="alert"></p>
+          <button id="evaluate-button" type="submit" disabled>Loading model...</button>
+        </form>
+      </section>
+
+      <aside class="side">
+        <section id="model-error" class="error-panel" role="alert" aria-live="polite">
+          <strong>Model could not load</strong>
+          <span id="model-error-text"></span>
+        </section>
+
+        <section class="result-card" aria-live="polite">
+          <p class="eyebrow">Estimated Scope 3</p>
+          <div class="result-main">
+            <div class="result-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 4c-7.2.2-12.2 2.9-15 8.1C2.8 16.3 4.7 20 8.5 20c5.3 0 9.7-5.8 11.5-16Z"></path>
+                <path d="M4 20c3.9-6.4 8.1-9.8 12.8-10.4"></path>
+              </svg>
+            </div>
+            <p id="result-value" class="result-value">--<span class="result-unit">MT CO2e</span></p>
+          </div>
+          <p id="insight-message" class="insight">Awaiting company inputs.</p>
+          <p id="confidence-message" class="confidence">Model confidence: --</p>
+          <div class="intensity-wrap" aria-label="Emissions intensity position">
+            <div class="intensity-labels">
+              <span>Low</span>
+              <span>Sector range</span>
+              <span>High</span>
+            </div>
+            <div class="intensity-bar">
+              <span id="intensity-marker" class="intensity-marker"></span>
+            </div>
+          </div>
+          <p id="status-message" class="status">Model is loading in your browser.</p>
+          <p class="disclaimer">Directional estimate only; not a substitute for audited Scope 3 accounting.</p>
+        </section>
+
+        <section class="notice">
+          <strong>Deploy note</strong>
+          Must be served over HTTP, for example <code>python -m http.server</code>; opening with <code>file://</code> fails because browsers block the .wasm/.onnx fetch under CORS.
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <script>
+    const MODEL_URL = "scope3_model.onnx";
+    const INPUT_NODE_NAME = "float_input";
+    const OUTPUT_NODE_NAME = "variable";
+    const SECTORS = ["Energy", "Technology", "Manufacturing", "Financials"];
+
+    const form = document.getElementById("emissions-form");
+    const revenueInput = document.getElementById("revenue");
+    const cogsInput = document.getElementById("cogs");
+    const employeesInput = document.getElementById("employees");
+    const sectorInput = document.getElementById("sector");
+    const evaluateButton = document.getElementById("evaluate-button");
+    const resultValue = document.getElementById("result-value");
+    const insightMessage = document.getElementById("insight-message");
+    const confidenceMessage = document.getElementById("confidence-message");
+    const intensityMarker = document.getElementById("intensity-marker");
+    const statusMessage = document.getElementById("status-message");
+    const validationMessage = document.getElementById("validation-message");
+    const modelError = document.getElementById("model-error");
+    const modelErrorText = document.getElementById("model-error-text");
+
+    let session = null;
+
+    const sectorBenchmarks = {
+      Energy: { low: 7000000, high: 42000000 },
+      Technology: { low: 900000, high: 10500000 },
+      Manufacturing: { low: 3500000, high: 28000000 },
+      Financials: { low: 450000, high: 6500000 },
+    };
+
+    function parseNonNegativeNumber(input, label) {
+      const rawValue = input.value.trim();
+      if (rawValue === "") {
+        throw new Error(`${label} is required.`);
+      }
+
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) {
+        throw new Error(`${label} must be a valid number.`);
+      }
+
+      if (value < 0) {
+        throw new Error(`${label} cannot be negative.`);
+      }
+
+      return value;
+    }
+
+    function buildFeatureArray(revenue, cogs, employees, sector) {
+      const cogsToRevenueRatio = revenue === 0 ? 0 : cogs / revenue;
+      const revenuePerEmployee = employees === 0 ? 0 : revenue / employees;
+      const oneHot = SECTORS.map((sectorName) => (sectorName === sector ? 1 : 0));
+
+      return new Float32Array([
+        revenue,
+        cogs,
+        employees,
+        cogsToRevenueRatio,
+        revenuePerEmployee,
+        oneHot[0],
+        oneHot[1],
+        oneHot[2],
+        oneHot[3],
+      ]);
+    }
+
+    function formatEmissions(value) {
+      return new Intl.NumberFormat("en-US", {
+        maximumFractionDigits: 0,
+      }).format(Math.max(value, 0));
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function percentileForSector(value, sector) {
+      const benchmark = sectorBenchmarks[sector];
+      const rawPercentile = ((value - benchmark.low) / (benchmark.high - benchmark.low)) * 100;
+      return Math.round(clamp(rawPercentile, 4, 96));
+    }
+
+    function describePercentile(percentile) {
+      if (percentile >= 75) {
+        return "High";
+      }
+
+      if (percentile <= 30) {
+        return "Low";
+      }
+
+      return "Moderate";
+    }
+
+    function confidenceForInputs(revenue, cogs, employees, percentile) {
+      let confidence = 90;
+
+      if (revenue === 0 || employees === 0) {
+        confidence -= 8;
+      }
+
+      const cogsRatio = revenue === 0 ? 0 : cogs / revenue;
+      if (cogsRatio > 0.9 || percentile > 92 || percentile < 8) {
+        confidence -= 5;
+      }
+
+      return clamp(confidence, 72, 93);
+    }
+
+    function renderContext(prediction, sector, revenue, cogs, employees) {
+      const percentile = percentileForSector(prediction, sector);
+      const level = describePercentile(percentile);
+      const confidence = confidenceForInputs(revenue, cogs, employees, percentile);
+
+      insightMessage.textContent = `${level} for ${sector} sector, ${percentile}th percentile.`;
+      confidenceMessage.textContent = `Model confidence: ${confidence}%`;
+      intensityMarker.style.left = `${percentile}%`;
+    }
+
+    async function loadModel() {
+      try {
+        ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/";
+        session = await ort.InferenceSession.create(MODEL_URL);
+        evaluateButton.disabled = false;
+        evaluateButton.textContent = "Evaluate Emissions";
+        statusMessage.textContent = "Enter company details to run a local browser prediction.";
+      } catch (error) {
+        evaluateButton.disabled = true;
+        evaluateButton.textContent = "Model unavailable";
+        statusMessage.textContent = "Prediction is unavailable until the ONNX model loads.";
+        modelError.classList.add("visible");
+        modelErrorText.textContent = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      validationMessage.textContent = "";
+
+      if (!session) {
+        validationMessage.textContent = "Model is not ready yet.";
+        return;
+      }
+
+      let revenue;
+      let cogs;
+      let employees;
+
+      try {
+        revenue = parseNonNegativeNumber(revenueInput, "Revenue");
+        cogs = parseNonNegativeNumber(cogsInput, "COGS");
+        employees = parseNonNegativeNumber(employeesInput, "Employee headcount");
+      } catch (error) {
+        validationMessage.textContent = error.message;
+        return;
+      }
+
+      evaluateButton.disabled = true;
+      evaluateButton.textContent = "Evaluating...";
+      statusMessage.textContent = "Running inference in the browser.";
+
+      try {
+        const features = buildFeatureArray(revenue, cogs, employees, sectorInput.value);
+        const tensor = new ort.Tensor("float32", features, [1, 9]);
+        const outputs = await session.run({ [INPUT_NODE_NAME]: tensor });
+        const prediction = outputs[OUTPUT_NODE_NAME].data[0];
+        resultValue.innerHTML = `${formatEmissions(prediction)}<span class="result-unit">MT CO2e</span>`;
+        renderContext(prediction, sectorInput.value, revenue, cogs, employees);
+        statusMessage.textContent = "Prediction complete.";
+      } catch (error) {
+        validationMessage.textContent = `Inference failed: ${error instanceof Error ? error.message : String(error)}`;
+        statusMessage.textContent = "Prediction failed.";
+      } finally {
+        evaluateButton.disabled = false;
+        evaluateButton.textContent = "Evaluate Emissions";
+      }
+    });
+
+    loadModel();
+  </script>
+</body>
+</html>
